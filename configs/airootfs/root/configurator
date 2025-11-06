@@ -83,8 +83,6 @@ Ukrainian|ua'
   choice=$(printf '%s\n' "$keyboards" | cut -d'|' -f1 | gum choose --height 10 --selected "English (US)" --header "Select keyboard layout") || abort
   keyboard=$(printf '%s\n' "$keyboards" | awk -F'|' -v c="$choice" '$1==c{print $2; exit}')
 
-  # Only attempt to load keyboard layout if we're on a real console
-  # loadkeys only works on Linux virtual consoles (tty), not in terminal emulators
   if [[ $(tty 2>/dev/null) == "/dev/tty"* ]]; then
     loadkeys "$keyboard" 2>/dev/null
   fi
@@ -120,7 +118,6 @@ user_form() {
     fi
   done
 
-  # Hash the password using yescrypt
   password_hash=$(printf '%s' "$password" | openssl passwd -6 -stdin)
 
   full_name=$(gum input --placeholder "Used for git authentication (hit return to skip)" --prompt.foreground="#845DF9" --prompt "Full name> ")
@@ -139,7 +136,6 @@ user_form() {
     fi
   done
 
-  # Pick timezone
   geo_guessed_timezone=$(tzupdate -p 2>/dev/null)
 
   if [[ -n $geo_guessed_timezone ]]; then
@@ -152,7 +148,6 @@ user_form() {
 user_form
 
 while true; do
-  # Add manual padding since gum table -p doesn't respect padding
   echo -e "Field,Value
 Username,$username
 Password,$(printf "%${#password}s" | tr ' ' '*')
@@ -172,74 +167,90 @@ Keyboard,$keyboard" |
   fi
 done
 
-# STEP 3: DISK
+# STEP 3: PARTITIONS
 
-get_disk_info() {
-  local device="$1"
-  local size model
+get_partition_info() {
+  local partition="$1"
+  local size fstype
 
-  # Get basic disk information
-  size=$(lsblk -dno SIZE "$device" 2>/dev/null)
-  model=$(lsblk -dno MODEL "$device" 2>/dev/null | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')
+  size=$(lsblk -dno SIZE "$partition" 2>/dev/null)
+  fstype=$(lsblk -dno FSTYPE "$partition" 2>/dev/null)
 
-  # Format display string
-  local display="$device"
+  local display="$partition"
   [[ -n "$size" ]] && display="$display ($size)"
-  [[ -n "$model" ]] && display="$display - $model"
+  [[ -n "$fstype" ]] && display="$display [$fstype]"
 
   echo "$display"
 }
 
-disk_form() {
-  step "Let's select where to install Omarchy..."
+partition_form() {
+  step "Let's select your partitions..."
 
-  # Don't offer the install media as an option (Arch ISO mounts it here)
-  local exclude_disk
-  exclude_disk=$(findmnt -no SOURCE /run/archiso/bootmnt 2>/dev/null || true)
+  local boot_source
+  boot_source=$(findmnt -no SOURCE /run/archiso/bootmnt 2>/dev/null || true)
 
-  # List all installable disks, excluding the boot device if present
-  local available_disks
-  available_disks=$(
-    lsblk -dpno NAME,TYPE |
-      awk '$2=="disk"{print $1}' |
+  local available_partitions
+  available_partitions=$(
+    lsblk -pno NAME,TYPE |
+      awk '$2=="part"{print $1}' |
       grep -E '/dev/(sd|hd|vd|nvme|mmcblk|xv)' |
-      { if [[ -n "$exclude_disk" ]]; then grep -Fvx "$exclude_disk"; else cat; fi; }
+      { if [[ -n "$boot_source" ]]; then grep -Fvx "$boot_source"; else cat; fi; }
   )
 
-  # Get available disks and format them with info
-  local disk_options=""
-  while IFS= read -r device; do
-    if [[ -n "$device" ]]; then
-      disk_info=$(get_disk_info "$device")
-      disk_options="$disk_options$disk_info"$'\n'
-    fi
-  done <<<"$available_disks"
+  if [[ -z "$available_partitions" ]]; then
+    abort "No available partitions found!"
+  fi
 
-  selected_display=$(echo "$disk_options" | gum choose --header "Select install disk") || abort
-  disk=$(echo "$selected_display" | awk '{print $1}')
+  # EFI/Boot partition
+  step "Select EFI/Boot partition..."
+  local efi_options=""
+  while IFS= read -r partition; do
+    if [[ -n "$partition" ]]; then
+      partition_info=$(get_partition_info "$partition")
+      efi_options="$efi_options$partition_info"$'\n'
+    fi
+  done <<<"$available_partitions"
+
+  efi_display=$(echo "$efi_options" | gum choose --header "Select EFI/Boot partition (e.g., /dev/sda1)") || abort
+  efi_device=$(echo "$efi_display" | awk '{print $1}')
+
+  # Main root partition
+  step "Select main partition for / (root)..."
+  main_display=$(echo "$efi_options" | gum choose --header "Select main partition for / (e.g., /dev/sda2)") || abort
+  main_device=$(echo "$main_display" | awk '{print $1}')
+
+  # Swap partition (optional)
+  step "Select swap partition (optional)..."
+  swap_display=$(echo "$efi_options" | gum choose --header "Select swap partition (or press Escape to skip)") || swap_display=""
+  swap_device=$(echo "$swap_display" | awk '{print $1}')
 }
 
-disk_form
+partition_form
 
 while true; do
-  gum style "Everything will be overwritten. There is no recovery possible."
-
   echo
-  if gum confirm --affirmative "Yes, format disk" --negative "No, change it" "Confirm overwriting ${disk}"; then
+  gum style "Partition Selection:"
+  echo "EFI/Boot: $efi_device"
+  echo "Root (/): $main_device"
+  echo "Swap: ${swap_device:-[None]}"
+  echo
+
+  gum style "WARNING: Selected partitions will be formatted!"
+  echo
+
+  if gum confirm --negative "No, change it" "Does this look right?"; then
     break
   else
-    disk_form
+    partition_form
   fi
 done
 
 clear
 
-# Save user full name and email address, so the autostart can
-# set them as OMARCHY_USER_NAME and OMARCHY_USER_EMAIL
+# Save metadata
 echo "$full_name" >user_full_name.txt
 echo "$email_address" >user_email_address.txt
 
-# Escape username and password for safe inclusion
 password_escaped=$(echo -n "$password" | jq -Rsa)
 password_hash_escaped=$(echo -n "$password_hash" | jq -Rsa)
 username_escaped=$(echo -n "$username" | jq -Rsa)
@@ -259,24 +270,82 @@ cat <<-_EOF_ >user_credentials.json
 }
 _EOF_
 
-# Setup partition layout
-disk_size=$(lsblk -bdno SIZE "$disk")
-mib=$((1024 * 1024))
-gib=$((mib * 1024))
-disk_size_in_mib=$((disk_size / mib * mib)) # Rounds to nearest MiB
-
-gpt_backup_reserve=$((mib))
-boot_partition_start=$((mib))
-boot_partition_size=$((2 * gib))
-
-main_partition_start=$((boot_partition_size + boot_partition_start))
-main_partition_size=$((disk_size_in_mib - main_partition_start - gpt_backup_reserve))
-
-# Detect T2 Mac and set appropriate kernel
+# Detect T2 Mac
 if lspci -nn 2>/dev/null | grep -q "106b:180[12]"; then
   kernel_choice="linux-t2"
 else
   kernel_choice="linux"
+fi
+
+# Build partition config
+declare -a partitions_to_config
+partitions_to_config+=("$efi_device")
+partitions_to_config+=("$main_device")
+[[ -n "$swap_device" ]] && partitions_to_config+=("$swap_device")
+
+# Build device modifications
+device_mods='[]'
+efi_device_config=$(
+  cat <<-'EOF'
+{
+    "device": "EFI_DEVICE_PLACEHOLDER",
+    "partitions": [
+        {
+            "btrfs": [],
+            "flags": [ "boot", "esp" ],
+            "fs_type": "fat32",
+            "mount_options": [],
+            "mountpoint": "/boot",
+            "status": "format",
+            "type": "primary"
+        }
+    ],
+    "wipe": false
+}
+EOF
+)
+efi_device_config="${efi_device_config//EFI_DEVICE_PLACEHOLDER/$efi_device}"
+
+root_device_config=$(
+  cat <<-'EOF'
+{
+    "device": "ROOT_DEVICE_PLACEHOLDER",
+    "partitions": [
+        {
+            "fs_type": "ext4",
+            "mountpoint": "/",
+            "status": "format",
+            "type": "primary"
+        }
+    ],
+    "wipe": false
+}
+EOF
+)
+root_device_config="${root_device_config//ROOT_DEVICE_PLACEHOLDER/$main_device}"
+
+# Build disk encryption config
+if [[ -n "$swap_device" ]]; then
+  swap_config=$(
+    cat <<-'EOF'
+{
+    "device": "SWAP_DEVICE_PLACEHOLDER",
+    "partitions": [
+        {
+            "fs_type": "swap",
+            "mountpoint": "swap",
+            "status": "format",
+            "type": "primary"
+        }
+    ],
+    "wipe": false
+}
+EOF
+  )
+  swap_config="${swap_config//SWAP_DEVICE_PLACEHOLDER/$swap_device}"
+  device_mods=$(jq -n --argjson efi "$efi_device_config" --argjson root "$root_device_config" --argjson swap "$swap_config" '[$efi, $root, $swap]')
+else
+  device_mods=$(jq -n --argjson efi "$efi_device_config" --argjson root "$root_device_config" '[$efi, $root]')
 fi
 
 cat <<-_EOF_ >user_configuration.json
@@ -285,75 +354,14 @@ cat <<-_EOF_ >user_configuration.json
     "archinstall-language": "English",
     "auth_config": {},
     "audio_config": { "audio": "pipewire" },
-    "bootloader": "Limine",
+    "bootloader": "Grub",
     "custom_commands": [],
     "disk_config": {
-        "btrfs_options": { 
-          "snapshot_config": {
-            "type": "Snapper"
-          }
-        },
-        "config_type": "default_layout",
-        "device_modifications": [
-            {
-                "device": "$disk",
-                "partitions": [
-                    {
-                        "btrfs": [],
-                        "dev_path": null,
-                        "flags": [ "boot", "esp" ],
-                        "fs_type": "fat32",
-                        "mount_options": [],
-                        "mountpoint": "/boot",
-                        "obj_id": "ea21d3f2-82bb-49cc-ab5d-6f81ae94e18d",
-                        "size": {
-                            "sector_size": { "unit": "B", "value": 512 },
-                            "unit": "B",
-                            "value": $boot_partition_size
-                        },
-                        "start": {
-                            "sector_size": { "unit": "B", "value": 512 },
-                            "unit": "B",
-                            "value": $boot_partition_start
-                        },
-                        "status": "create",
-                        "type": "primary"
-                    },
-                    {
-                        "btrfs": [
-                            { "mountpoint": "/", "name": "@" },
-                            { "mountpoint": "/home", "name": "@home" },
-                            { "mountpoint": "/var/log", "name": "@log" },
-                            { "mountpoint": "/var/cache/pacman/pkg", "name": "@pkg" }
-                        ],
-                        "dev_path": null,
-                        "flags": [],
-                        "fs_type": "btrfs",
-                        "mount_options": [ "compress=zstd" ],
-                        "mountpoint": null,
-                        "obj_id": "8c2c2b92-1070-455d-b76a-56263bab24aa",
-                        "size": {
-                            "sector_size": { "unit": "B", "value": 512 },
-                            "unit": "B",
-                            "value": $main_partition_size
-                        },
-                        "start": {
-                            "sector_size": { "unit": "B", "value": 512 },
-                            "unit": "B",
-                            "value": $main_partition_start
-                        },
-                        "status": "create",
-                        "type": "primary"
-                    }
-                ],
-                "wipe": true
-            }
-        ],
+        "config_type": "custom_layout",
+        "device_modifications": $(echo "$device_mods" | jq -c .),
         "disk_encryption": {
             "encryption_type": "luks",
-            "lvm_volumes": [],
-            "iter_time": 2000,
-            "partitions": [ "8c2c2b92-1070-455d-b76a-56263bab24aa" ],
+            "partitions": [ "$main_device" ],
             "encryption_password": $password_escaped
         }
     },
@@ -364,7 +372,6 @@ cat <<-_EOF_ >user_configuration.json
     "parallel_downloads": 8,
     "script": null,
     "services": [],
-    "swap": true,
     "timezone": "$timezone",
     "locale_config": {
         "kb_layout": "$keyboard",

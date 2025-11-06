@@ -88,8 +88,11 @@ ln -s "$offline_mirror_dir" "/var/cache/omarchy/mirror/offline"
 cp $build_cache_dir/pacman.conf "$build_cache_dir/airootfs/etc/pacman.conf"
 
 # Finally, we assemble the entire ISO
-mkarchiso -v -w "$build_cache_dir/work/" -o "/out/" "$build_cache_dir/"
+WORK_DIR="$HOME/.cache/omarchy/archiso-work-$$"
+mkdir -p "$WORK_DIR"
+trap "rm -rf $WORK_DIR" EXIT
 
+mkarchiso -v -w "$WORK_DIR" -o "/out/" "$build_cache_dir/"
 # Fix ownership of output files to match host user
 if [ -n "$HOST_UID" ] && [ -n "$HOST_GID" ]; then
     chown -R "$HOST_UID:$HOST_GID" /out/

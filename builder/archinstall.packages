@@ -6,7 +6,7 @@ efibootmgr
 intel-ucode
 linux-firmware
 linux
-limine
+grub
 omarchy-keyring
 openssh
 pipewire

@@ -32,11 +32,13 @@ BUILD_ROOT=$(realpath "${BASH_SOURCE[0]%/*}/..")
 BUILD_RELEASE_PATH="$BUILD_ROOT/release"
 mkdir -p "$BUILD_RELEASE_PATH"
 
-OMARCHY_INSTALLER_REPO="${OMARCHY_INSTALLER_REPO:-basecamp/omarchy}"
+OMARCHY_INSTALLER_REPO="${OMARCHY_INSTALLER_REPO:-brrock/omarchy}"
 OMARCHY_INSTALLER_REF="${OMARCHY_INSTALLER_REF:-master}"
 
 DOCKER_ARGS=(
   --rm
+  --userns=host
+  --cap-add=SYS_ADMIN
   --privileged
   -e "OMARCHY_INSTALLER_REPO=$OMARCHY_INSTALLER_REPO"
   -e "OMARCHY_INSTALLER_REF=$OMARCHY_INSTALLER_REF"
@@ -64,7 +66,7 @@ if [[ -z "$NO_CACHE" ]]; then
   DOCKER_ARGS+=(-v "$OFFLINE_REPO_BUILD_CACHE_DIR:/var/cache/airootfs/var/cache/omarchy")
 fi
 
-# Run the builder with assembled args
+# Run the builder with assembled arguments
 docker run "${DOCKER_ARGS[@]}" archlinux/archlinux:latest /$BUILD_SCRIPT
 
 # Move as install ref
