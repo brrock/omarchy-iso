@@ -19,9 +19,9 @@ jobs:
 
     - name: Build ISO directly in Arch Linux container
       run: |
-        pacman -Syu --noconfirm
-        chmod +x bin/omarchy-iso-make
-        bin/omarchy-iso-make --no-boot-offer
+        pacman -Syu --noconfirm 
+        chmod +x builder/build-iso.sh
+        ./builder/build-iso.sh
 
     - name: Upload ISO artifact
       uses: actions/upload-artifact@v4
