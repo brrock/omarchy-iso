@@ -97,3 +97,4 @@ mkarchiso -v -w "$WORK_DIR" -o "/out/" "$build_cache_dir/"
 if [ -n "$HOST_UID" ] && [ -n "$HOST_GID" ]; then
     chown -R "$HOST_UID:$HOST_GID" /out/
 fi
+
