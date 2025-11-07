@@ -9,23 +9,20 @@ jobs:
   build-iso:
     runs-on: ubuntu-latest
 
-    steps:
-    - name: Free disk space on host
-      uses: jlumbroso/free-disk-space@main
-      with:
-        tool-cache: true
-        android: true
-        dotnet: true
-        haskell: true
-        large-packages: true
-        docker-images: true
-        swap-storage: true
-
     container:
       image: archlinux/archlinux:latest
       options: --privileged
 
     steps:
+    - name: Clean up host
+      run: |
+        dh -f 
+        rm -rf /__t/* || true
+        # remove Haskell runtime: about 6.3GB (host /usr/local/.ghcup)
+        rm -rf /host/usr/local/.ghcup || true
+        # remove Android library: about 7.8GB (host /usr/local/lib/android)
+        rm -rf /host/usr/local/lib/android || true
+        dh -f 
     - name: Install Git in container
       run: |
         pacman -Syu --noconfirm
@@ -36,6 +33,17 @@ jobs:
       with:
         submodules: recursive
         fetch-depth: 0
+
+    - name: Debug workspace
+      run: |
+        echo "GitHub workspace: $GITHUB_WORKSPACE"
+        echo "Current directory: $(pwd)"
+        echo "Contents of workspace:"
+        ls -la "$GITHUB_WORKSPACE"
+        echo "Contents of configs:"
+        ls -la "$GITHUB_WORKSPACE/configs" || echo "configs dir not found"
+        echo "Contents of archiso:"
+        ls -la "$GITHUB_WORKSPACE/archiso" || echo "archiso dir not found"
 
     - name: Build ISO directly in Arch Linux container
       run: |
