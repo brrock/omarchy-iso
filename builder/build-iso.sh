@@ -53,19 +53,19 @@ pacman -Syu --noconfirm
 pacman --noconfirm -Sy archlinux-keyring
 sleep 2
 
-echo "Updating pacman and installing dependencies..."
+echo "Installing core dependencies..."
 pacman --noconfirm -Sy archiso git sudo base-devel jq grub
+sleep 1
 
-# Populate omarchy keyring BEFORE installing omarchy-keyring package
+# Install omarchy-keyring package FIRST (which creates the keyring files)
+echo "Installing omarchy-keyring..."
+pacman --config "$CONFIGS_DIR/pacman-online.conf" --noconfirm -Sy omarchy-keyring
+sleep 1
+
+# NOW populate the omarchy keyring (after the package is installed)
 echo "Populating omarchy keyring..."
 pacman-key --populate omarchy
 sleep 1
-
-# Install omarchy-keyring with auto-confirm for PGP key import
-echo "Installing omarchy-keyring..."
-pacman --config "$CONFIGS_DIR/pacman-online.conf" --noconfirm -Sy omarchy-keyring || {
-    echo "WARNING: omarchy-keyring installation had issues, but continuing..."
-}
 
 # Setup build locations
 build_cache_dir="/var/cache/archiso-build"
