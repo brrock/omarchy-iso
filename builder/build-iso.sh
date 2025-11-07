@@ -19,7 +19,6 @@ fi
 # Verify directories exist
 if [ ! -d "$CONFIGS_DIR" ]; then
     echo "ERROR: Config directory not found at $CONFIGS_DIR"
-    echo "REPO_ROOT: $REPO_ROOT"
     exit 1
 fi
 
@@ -30,15 +29,12 @@ fi
 
 if [ ! -d "$ARCHISO_DIR" ]; then
     echo "ERROR: archiso submodule not found at $ARCHISO_DIR"
-    echo "Make sure you've cloned with: git clone --recurse-submodules"
     exit 1
 fi
 
 ARCHISO_CONFIG_DIR="$ARCHISO_DIR/configs/releng"
 if [ ! -d "$ARCHISO_CONFIG_DIR" ]; then
     echo "ERROR: archiso releng config not found at $ARCHISO_CONFIG_DIR"
-    echo "Contents of $ARCHISO_DIR:"
-    ls -la "$ARCHISO_DIR" || true
     exit 1
 fi
 
@@ -47,16 +43,29 @@ echo "✓ Using CONFIGS_DIR: $CONFIGS_DIR"
 echo "✓ Using ARCHISO_CONFIG_DIR: $ARCHISO_CONFIG_DIR"
 echo ""
 
-# Update pacman and install core packages
-echo "Updating pacman and installing dependencies..."
+# Initialize and setup pacman keys FIRST
+echo "Initializing pacman-key..."
+pacman-key --init
+sleep 2
+
+echo "Populating archlinux-keyring..."
 pacman -Syu --noconfirm
 pacman --noconfirm -Sy archlinux-keyring
+sleep 2
+
+echo "Updating pacman and installing dependencies..."
 pacman --noconfirm -Sy archiso git sudo base-devel jq grub
 
-# Install omarchy-keyring for package verification during build
-echo "Installing omarchy-keyring..."
-pacman --config "$CONFIGS_DIR/pacman-online.conf" --noconfirm -Sy omarchy-keyring
+# Populate omarchy keyring BEFORE installing omarchy-keyring package
+echo "Populating omarchy keyring..."
 pacman-key --populate omarchy
+sleep 1
+
+# Install omarchy-keyring with auto-confirm for PGP key import
+echo "Installing omarchy-keyring..."
+pacman --config "$CONFIGS_DIR/pacman-online.conf" --noconfirm -Sy omarchy-keyring || {
+    echo "WARNING: omarchy-keyring installation had issues, but continuing..."
+}
 
 # Setup build locations
 build_cache_dir="/var/cache/archiso-build"
@@ -146,8 +155,6 @@ repo-add --new "$offline_mirror_dir/offline.db.tar.gz" \
   "$offline_mirror_dir/"*.pkg.tar.zst
 
 # Create a symlink to the offline mirror instead of duplicating it.
-# mkarchiso needs packages at /var/cache/omarchy/mirror/offline in the container,
-# but they're actually in $build_cache_dir/airootfs/var/cache/omarchy/mirror/offline
 mkdir -p /var/cache/omarchy/mirror
 ln -s "$offline_mirror_dir" "/var/cache/omarchy/mirror/offline"
 
