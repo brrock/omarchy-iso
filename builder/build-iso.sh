@@ -169,9 +169,7 @@ echo "Building ISO..."
 WORK_DIR="$HOME/.cache/omarchy/archiso-work-$$"
 mkdir -p "$WORK_DIR"
 trap "rm -rf $WORK_DIR" EXIT
-
-mkarchiso -v -w "$WORK_DIR" -o "/out/" "$build_cache_dir/"
-
+mkarchiso -v -w "$WORK_DIR" -o "$REPO_ROOT/out/" "$build_cache_dir/"
 # Fix ownership of output files to match host user
 if [ -n "$HOST_UID" ] && [ -n "$HOST_GID" ]; then
     chown -R "$HOST_UID:$HOST_GID" /out/
