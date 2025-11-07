@@ -16,13 +16,13 @@ jobs:
     steps:
     - name: Clean up host
       run: |
-        dh -f 
+        df -f 
         rm -rf /__t/* || true
         # remove Haskell runtime: about 6.3GB (host /usr/local/.ghcup)
         rm -rf /host/usr/local/.ghcup || true
         # remove Android library: about 7.8GB (host /usr/local/lib/android)
         rm -rf /host/usr/local/lib/android || true
-        dh -f 
+        df -f 
     - name: Install Git in container
       run: |
         pacman -Syu --noconfirm
