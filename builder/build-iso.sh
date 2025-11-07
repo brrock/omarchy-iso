@@ -2,14 +2,51 @@
 
 set -e
 
+# In GitHub Actions container, use REPO_ROOT or default to current directory
+if [ -n "$REPO_ROOT" ]; then
+    CONFIGS_DIR="$REPO_ROOT/configs"
+    BUILDER_DIR="$REPO_ROOT/builder"
+else
+    # Fallback for local execution
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+    CONFIGS_DIR="$REPO_ROOT/configs"
+    BUILDER_DIR="$SCRIPT_DIR"
+fi
+
+# Verify configs directory exists
+if [ ! -d "$CONFIGS_DIR" ]; then
+    echo "ERROR: Config directory not found at $CONFIGS_DIR"
+    echo "REPO_ROOT: $REPO_ROOT"
+    echo "Contents of REPO_ROOT:"
+    ls -la "$REPO_ROOT" 2>/dev/null || echo "  (cannot read)"
+    echo ""
+    echo "Trying to list parent directories:"
+    ls -la / 2>/dev/null | grep -E "github|workspace|configs" || echo "  (no matches)"
+    exit 1
+fi
+
+if [ ! -f "$CONFIGS_DIR/pacman-online.conf" ]; then
+    echo "ERROR: pacman-online.conf not found at $CONFIGS_DIR/pacman-online.conf"
+    echo "Contents of $CONFIGS_DIR:"
+    ls -la "$CONFIGS_DIR"
+    exit 1
+fi
+
+echo "✓ Using REPO_ROOT: $REPO_ROOT"
+echo "✓ Using CONFIGS_DIR: $CONFIGS_DIR"
+echo "✓ Using BUILDER_DIR: $BUILDER_DIR"
+echo ""
+
 # Note that these are packages installed to the Arch container used to build the ISO.
 pacman-key --init
 pacman --noconfirm -Sy archlinux-keyring
 pacman --noconfirm -Sy archiso git sudo base-devel jq grub
 
 # Install omarchy-keyring for package verification during build
-# The [omarchy] repo is defined in /configs/pacman-online.conf with SigLevel = Optional TrustAll
-pacman --config /configs/pacman-online.conf --noconfirm -Sy omarchy-keyring
+# The [omarchy] repo is defined in pacman-online.conf with SigLevel = Optional TrustAll
+echo "Installing omarchy-keyring..."
+pacman --config "$CONFIGS_DIR/pacman-online.conf" --noconfirm -Sy omarchy-keyring
 pacman-key --populate omarchy
 
 # Setup build locations
@@ -28,20 +65,27 @@ rm -rf "$build_cache_dir/airootfs/etc/systemd/system/reflector.service.d"
 rm -rf "$build_cache_dir/airootfs/etc/xdg/reflector"
 
 # Bring in our configs
-cp -r /configs/* $build_cache_dir/
+echo "Copying configs..."
+cp -r "$CONFIGS_DIR"/* $build_cache_dir/
 
 # Clone Omarchy itself
-git clone -b $OMARCHY_INSTALLER_REF https://github.com/$OMARCHY_INSTALLER_REPO.git "$build_cache_dir/airootfs/root/omarchy"
+echo "Cloning Omarchy..."
+git clone -b $OMARCHY_INSTALLER_REF \
+  https://github.com/$OMARCHY_INSTALLER_REPO.git \
+  "$build_cache_dir/airootfs/root/omarchy"
 
 # Make log uploader available in the ISO too
 mkdir -p "$build_cache_dir/airootfs/usr/local/bin/"
-cp "$build_cache_dir/airootfs/root/omarchy/bin/omarchy-upload-log" "$build_cache_dir/airootfs/usr/local/bin/omarchy-upload-log"
+cp "$build_cache_dir/airootfs/root/omarchy/bin/omarchy-upload-log" \
+  "$build_cache_dir/airootfs/usr/local/bin/omarchy-upload-log"
 
 # Copy the Omarchy Plymouth theme to the ISO
 mkdir -p "$build_cache_dir/airootfs/usr/share/plymouth/themes/omarchy"
-cp -r "$build_cache_dir/airootfs/root/omarchy/default/plymouth/"* "$build_cache_dir/airootfs/usr/share/plymouth/themes/omarchy/"
+cp -r "$build_cache_dir/airootfs/root/omarchy/default/plymouth/"* \
+  "$build_cache_dir/airootfs/usr/share/plymouth/themes/omarchy/"
 
 # Download and verify Node.js binary for offline installation
+echo "Downloading Node.js..."
 NODE_DIST_URL="https://nodejs.org/dist/latest"
 
 # Get checksums and parse filename and SHA
@@ -53,6 +97,7 @@ NODE_SHA=$(echo "$NODE_SHASUMS" | grep "linux-x64.tar.gz" | awk '{print $1}')
 curl -fsSL "$NODE_DIST_URL/$NODE_FILENAME" -o "/tmp/$NODE_FILENAME"
 
 # Verify SHA256 checksum
+echo "Verifying Node.js checksum..."
 echo "$NODE_SHA /tmp/$NODE_FILENAME" | sha256sum -c - || {
     echo "ERROR: Node.js checksum verification failed!"
     exit 1
@@ -67,15 +112,23 @@ arch_packages=(linux-t2 git gum jq openssl plymouth tzupdate omarchy-keyring)
 printf '%s\n' "${arch_packages[@]}" >>"$build_cache_dir/packages.x86_64"
 
 # Build list of all the packages needed for the offline mirror
+echo "Building package list..."
 all_packages=($(cat "$build_cache_dir/packages.x86_64"))
-all_packages+=($(grep -v '^#' "$build_cache_dir/airootfs/root/omarchy/install/omarchy-base.packages" | grep -v '^$'))
-all_packages+=($(grep -v '^#' "$build_cache_dir/airootfs/root/omarchy/install/omarchy-other.packages" | grep -v '^$'))
-all_packages+=($(grep -v '^#' /builder/archinstall.packages | grep -v '^$'))
+all_packages+=($(grep -v '^#' \
+  "$build_cache_dir/airootfs/root/omarchy/install/omarchy-base.packages" \
+  | grep -v '^$'))
+all_packages+=($(grep -v '^#' \
+  "$build_cache_dir/airootfs/root/omarchy/install/omarchy-other.packages" \
+  | grep -v '^$'))
+all_packages+=($(grep -v '^#' "$BUILDER_DIR/archinstall.packages" | grep -v '^$'))
 
 # Download all the packages to the offline mirror inside the ISO
+echo "Downloading packages (this may take a while)..."
 mkdir -p /tmp/offlinedb
-pacman --config /configs/pacman-online.conf --noconfirm -Syw "${all_packages[@]}" --cachedir $offline_mirror_dir/ --dbpath /tmp/offlinedb
-repo-add --new "$offline_mirror_dir/offline.db.tar.gz" "$offline_mirror_dir/"*.pkg.tar.zst
+pacman --config "$CONFIGS_DIR/pacman-online.conf" --noconfirm -Syw \
+  "${all_packages[@]}" --cachedir $offline_mirror_dir/ --dbpath /tmp/offlinedb
+repo-add --new "$offline_mirror_dir/offline.db.tar.gz" \
+  "$offline_mirror_dir/"*.pkg.tar.zst
 
 # Create a symlink to the offline mirror instead of duplicating it.
 # mkarchiso needs packages at /var/cache/omarchy/mirror/offline in the container,
@@ -85,16 +138,19 @@ ln -s "$offline_mirror_dir" "/var/cache/omarchy/mirror/offline"
 
 # Copy the pacman.conf to the ISO's /etc directory so the live environment uses our
 # same config when booted
-cp $build_cache_dir/pacman.conf "$build_cache_dir/airootfs/etc/pacman.conf"
+cp "$build_cache_dir/pacman.conf" "$build_cache_dir/airootfs/etc/pacman.conf"
 
 # Finally, we assemble the entire ISO
+echo "Building ISO..."
 WORK_DIR="$HOME/.cache/omarchy/archiso-work-$$"
 mkdir -p "$WORK_DIR"
 trap "rm -rf $WORK_DIR" EXIT
 
 mkarchiso -v -w "$WORK_DIR" -o "/out/" "$build_cache_dir/"
+
 # Fix ownership of output files to match host user
 if [ -n "$HOST_UID" ] && [ -n "$HOST_GID" ]; then
     chown -R "$HOST_UID:$HOST_GID" /out/
 fi
 
+echo "✓ ISO build complete!"
