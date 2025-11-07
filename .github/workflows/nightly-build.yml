@@ -14,6 +14,11 @@ jobs:
       options: --privileged
 
     steps:
+    - name: Install Git in container
+      run: |
+        pacman -Syu --noconfirm
+        pacman -Sy --noconfirm git
+
     - name: Checkout repository with submodules
       uses: actions/checkout@v4
       with:
@@ -28,6 +33,8 @@ jobs:
         ls -la "$GITHUB_WORKSPACE"
         echo "Contents of configs:"
         ls -la "$GITHUB_WORKSPACE/configs" || echo "configs dir not found"
+        echo "Contents of archiso:"
+        ls -la "$GITHUB_WORKSPACE/archiso" || echo "archiso dir not found"
 
     - name: Build ISO directly in Arch Linux container
       run: |
