@@ -4,6 +4,8 @@ set -e
 
 # In GitHub Actions container, use REPO_ROOT or default to current directory
 if [ -n "$REPO_ROOT" ]; then
+    OMARCHY_INSTALLER_REPO="brrock/omarchy"
+    OMARCHY_INSTALLER_REF="master"
     CONFIGS_DIR="$REPO_ROOT/configs"
     BUILDER_DIR="$REPO_ROOT/builder"
     ARCHISO_DIR="$REPO_ROOT/archiso"
