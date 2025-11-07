@@ -6,66 +6,76 @@ set -e
 if [ -n "$REPO_ROOT" ]; then
     CONFIGS_DIR="$REPO_ROOT/configs"
     BUILDER_DIR="$REPO_ROOT/builder"
+    ARCHISO_DIR="$REPO_ROOT/archiso"
 else
     # Fallback for local execution
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
     CONFIGS_DIR="$REPO_ROOT/configs"
     BUILDER_DIR="$SCRIPT_DIR"
+    ARCHISO_DIR="$REPO_ROOT/archiso"
 fi
 
-# Verify configs directory exists
+# Verify directories exist
 if [ ! -d "$CONFIGS_DIR" ]; then
     echo "ERROR: Config directory not found at $CONFIGS_DIR"
     echo "REPO_ROOT: $REPO_ROOT"
-    echo "Contents of REPO_ROOT:"
-    ls -la "$REPO_ROOT" 2>/dev/null || echo "  (cannot read)"
-    echo ""
-    echo "Trying to list parent directories:"
-    ls -la / 2>/dev/null | grep -E "github|workspace|configs" || echo "  (no matches)"
     exit 1
 fi
 
 if [ ! -f "$CONFIGS_DIR/pacman-online.conf" ]; then
     echo "ERROR: pacman-online.conf not found at $CONFIGS_DIR/pacman-online.conf"
-    echo "Contents of $CONFIGS_DIR:"
-    ls -la "$CONFIGS_DIR"
+    exit 1
+fi
+
+if [ ! -d "$ARCHISO_DIR" ]; then
+    echo "ERROR: archiso submodule not found at $ARCHISO_DIR"
+    echo "Make sure you've cloned with: git clone --recurse-submodules"
+    exit 1
+fi
+
+ARCHISO_CONFIG_DIR="$ARCHISO_DIR/configs/releng"
+if [ ! -d "$ARCHISO_CONFIG_DIR" ]; then
+    echo "ERROR: archiso releng config not found at $ARCHISO_CONFIG_DIR"
+    echo "Contents of $ARCHISO_DIR:"
+    ls -la "$ARCHISO_DIR" || true
     exit 1
 fi
 
 echo "✓ Using REPO_ROOT: $REPO_ROOT"
 echo "✓ Using CONFIGS_DIR: $CONFIGS_DIR"
-echo "✓ Using BUILDER_DIR: $BUILDER_DIR"
+echo "✓ Using ARCHISO_CONFIG_DIR: $ARCHISO_CONFIG_DIR"
 echo ""
 
-# Note that these are packages installed to the Arch container used to build the ISO.
-pacman-key --init
+# Update pacman and install core packages
+echo "Updating pacman and installing dependencies..."
+pacman -Syu --noconfirm
 pacman --noconfirm -Sy archlinux-keyring
 pacman --noconfirm -Sy archiso git sudo base-devel jq grub
 
 # Install omarchy-keyring for package verification during build
-# The [omarchy] repo is defined in pacman-online.conf with SigLevel = Optional TrustAll
 echo "Installing omarchy-keyring..."
 pacman --config "$CONFIGS_DIR/pacman-online.conf" --noconfirm -Sy omarchy-keyring
 pacman-key --populate omarchy
 
 # Setup build locations
-build_cache_dir="/var/cache"
+build_cache_dir="/var/cache/archiso-build"
 offline_mirror_dir="$build_cache_dir/airootfs/var/cache/omarchy/mirror/offline"
 mkdir -p $build_cache_dir/
 mkdir -p $offline_mirror_dir/
 
-# We base our ISO on the official arch ISO (releng) config
-cp -r /archiso/configs/releng/* $build_cache_dir/
-rm "$build_cache_dir/airootfs/etc/motd"
+# We base our ISO on the archiso releng config from the submodule
+echo "Copying archiso releng config from submodule..."
+cp -r "$ARCHISO_CONFIG_DIR"/* $build_cache_dir/
+rm -f "$build_cache_dir/airootfs/etc/motd"
 
 # Avoid using reflector for mirror identification as we are relying on the global CDN
-rm "$build_cache_dir/airootfs/etc/systemd/system/multi-user.target.wants/reflector.service"
+rm -f "$build_cache_dir/airootfs/etc/systemd/system/multi-user.target.wants/reflector.service"
 rm -rf "$build_cache_dir/airootfs/etc/systemd/system/reflector.service.d"
 rm -rf "$build_cache_dir/airootfs/etc/xdg/reflector"
 
 # Bring in our configs
-echo "Copying configs..."
+echo "Copying custom configs..."
 cp -r "$CONFIGS_DIR"/* $build_cache_dir/
 
 # Clone Omarchy itself
@@ -92,6 +102,11 @@ NODE_DIST_URL="https://nodejs.org/dist/latest"
 NODE_SHASUMS=$(curl -fsSL "$NODE_DIST_URL/SHASUMS256.txt")
 NODE_FILENAME=$(echo "$NODE_SHASUMS" | grep "linux-x64.tar.gz" | awk '{print $2}')
 NODE_SHA=$(echo "$NODE_SHASUMS" | grep "linux-x64.tar.gz" | awk '{print $1}')
+
+if [ -z "$NODE_FILENAME" ] || [ -z "$NODE_SHA" ]; then
+    echo "ERROR: Could not parse Node.js checksums"
+    exit 1
+fi
 
 # Download the tarball
 curl -fsSL "$NODE_DIST_URL/$NODE_FILENAME" -o "/tmp/$NODE_FILENAME"
